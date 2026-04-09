@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "dh-skills",
+  "description": "개인용 Claude Code 스킬 모음 — cmux 워크스페이스 관리, 커스텀 커맨드",
+  "owner": {
+    "name": "KwonDooHyeon"
+  },
+  "plugins": [
+    {
+      "name": "dh-commands",
+      "description": "cmux 워크스페이스 관리(상태 조회, 메시지 전송, 브라우저 테스트), git 커밋 등 커스텀 커맨드 모음",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
