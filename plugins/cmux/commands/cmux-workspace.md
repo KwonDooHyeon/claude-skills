@@ -1,13 +1,13 @@
 ---
 allowed-tools: Bash(cmux *)
-description: cmux 워크스페이스의 모든 surface를 관찰하고, 상태를 요약하고, 다른 세션에 메시지를 전송하고, 브라우저로 URL을 열어 테스트하는 스킬. "세션 상태", "워크스페이스 확인", "서버 상태", "다른 세션에 전달", "surface 확인", "브라우저로 열어줘", "테스트 확인" 등의 요청 시 트리거.
+description: cmux 워크스페이스의 모든 surface를 관찰하고, 상태를 요약하고, 다른 세션에 메시지를 전송하고, 브라우저로 URL을 열어 테스트하고, 서버를 실행하는 스킬. "세션 상태", "워크스페이스 확인", "서버 상태", "다른 세션에 전달", "surface 확인", "브라우저로 열어줘", "서버 띄워줘", "백엔드 실행", "프론트 실행", "서버 로그", "서버 시작", "서버 중지" 등의 요청 시 트리거.
 argument-hint: [status|send <surface> <msg>|read <surface>|tree|browse <url>]
 ---
 
 # cmux 워크스페이스 관리
 
 루트 세션에서 cmux 워크스페이스 내 모든 surface를 관찰하고 오케스트레이션하는 스킬.
-여러 세션의 작업 상태를 한 곳에서 파악하고, 메시지 전송, 브라우저로 URL 열어서 테스트까지 가능.
+여러 세션의 작업 상태를 한 곳에서 파악하고, 메시지 전송, 브라우저 테스트, 서버 실행까지 가능.
 
 ## cmux 계층 구조
 
@@ -26,6 +26,9 @@ cmux read-screen --surface <ref> --scrollback --lines 200  # 스크롤백 포함
 cmux send --surface <ref> "텍스트"           # surface에 텍스트 전송
 cmux send-key --surface <ref> "Enter"        # 키 입력 전송
 cmux list-workspaces                         # 워크스페이스 목록
+cmux new-surface --pane <ref> --workspace <ref>  # 새 surface(탭) 생성
+cmux rename-tab --surface <ref> "이름"       # 탭 이름 변경
+cmux close-surface --surface <ref>           # surface 닫기
 
 # 브라우저 자동화
 cmux new-window                              # 새 창 생성
@@ -94,6 +97,43 @@ cmux browser --surface <ref> eval "js코드"               # JS 실행
 6. 읽기 완료 후 AskUserQuestion으로 "브라우저 창을 닫을까요?" 확인
 7. 닫겠다고 하면 `cmux close-window --window <ref>` 정리
 
+### 서버 실행 — 사용자가 "서버 띄워줘", "백엔드 실행", "프론트 실행" 등을 요청할 때
+
+사용자의 요청에서 무엇을 실행할지 판단한 후 아래 순서로 진행:
+
+1. **cmux identify로 현재 위치 확인** (현재 pane과 workspace를 알아야 surface를 만들 수 있음)
+2. **cmux tree로 이미 실행 중인 로그 surface가 있는지 확인** — 같은 이름의 surface가 있으면 재사용 (중복 생성 방지)
+3. **새 surface 생성** — 루트 세션과 같은 pane에 탭으로 추가:
+   ```bash
+   cmux new-surface --pane <현재_pane_ref> --workspace <현재_workspace_ref>
+   ```
+4. **탭 이름 변경** — 용도를 알 수 있도록:
+   ```bash
+   cmux rename-tab --surface <새_surface_ref> "<이름>"
+   ```
+   이름 규칙: `{프로젝트}-{역할}-log` (예: `voice-back-log`, `voice-web-log`)
+5. **경로 이동 + 서버 실행** — 해당 surface에 명령 전송:
+   ```bash
+   cmux send --surface <새_surface_ref> "cd <경로> && <실행 명령>"
+   cmux send-key --surface <새_surface_ref> "Enter"
+   ```
+6. **사용자에게 결과 보고** — "surface:XX에서 서버가 시작되었습니다. 로그를 확인하려면 탭을 전환하세요."
+
+#### 실행할 명령은 프로젝트 구조를 먼저 파악해서 결정
+
+서버 실행 명령은 프로젝트마다 다르므로, 프로젝트 디렉토리를 먼저 확인한다:
+- `package.json`이 있으면 → Node.js 프로젝트 (`pnpm dev`, `npm run dev` 등)
+- `pyproject.toml`이 있으면 → Python 프로젝트 (`uv run uvicorn ...` 등)
+- `docker-compose.yml`이 있으면 → Docker 필요 여부 확인
+- 확신이 없으면 사용자에게 실행 명령을 물어보기
+
+#### 서버 중지
+
+사용자가 "서버 중지", "서버 꺼줘" 등을 요청하면:
+1. 로그 surface를 찾기 (이름으로 매칭)
+2. `cmux send-key --surface <ref> "C-c"` 로 Ctrl+C 전송
+3. 필요 시 surface를 닫기: `cmux close-surface --surface <ref>`
+
 ---
 
 ## 중요 규칙
@@ -105,3 +145,5 @@ cmux browser --surface <ref> eval "js코드"               # JS 실행
 5. **Claude 세션 감지** — Claude Code 관련 내용이 보이면 진행 중인 작업과 진행률 분석
 6. **브라우저는 새 창** — `cmux new-window`로 별도 창에서 열기. 현재 작업 공간 보호
 7. **입력 대기 감지** — surface에 프롬프트나 선택지가 보이면 "사용자 입력을 기다리고 있습니다" 알림
+8. **서버 surface 중복 방지** — 서버 실행 전 같은 이름의 surface가 이미 있으면 재사용
+9. **서버 실행 명령 불확실 시 물어보기** — 프로젝트 구조로 판단이 안 되면 사용자에게 확인
