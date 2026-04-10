@@ -1,0 +1,16 @@
+{
+  "description": "Claude Code 작업 완료 시 cmux notify로 알림 전송",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/notify-on-stop.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
