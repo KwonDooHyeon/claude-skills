@@ -8,13 +8,19 @@
   "plugins": [
     {
       "name": "dh-cmux",
-      "description": "cmux 워크스페이스 관리 — 상태 조회, 메시지 전송, 브라우저 테스트",
+      "description": "cmux 워크스페이스 관리 — 상태 조회, 메시지 전송, 브라우저 테스트, 멀티 세션 디버깅, Stop hook 자동 알림",
+      "author": {
+        "name": "KwonDooHyeon"
+      },
       "source": "./plugins/cmux",
       "category": "productivity"
     },
     {
       "name": "dh-git",
       "description": "Conventional Commits 스타일 한국어 git 커밋",
+      "author": {
+        "name": "KwonDooHyeon"
+      },
       "source": "./plugins/git",
       "category": "development"
     }
