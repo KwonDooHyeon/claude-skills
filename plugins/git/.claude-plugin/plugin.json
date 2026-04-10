@@ -1,0 +1,7 @@
+{
+  "name": "dh-git",
+  "description": "Conventional Commits 스타일의 한국어 git 커밋 메시지 자동 생성",
+  "author": {
+    "name": "KwonDooHyeon"
+  }
+}
