@@ -89,8 +89,8 @@ cmux browser --surface <ref> eval "js코드"               # JS 실행
 
 **반드시 새 창(window)에서 열기.** 현재 워크스페이스에 열면 작업 공간이 방해됨.
 
-1. `cmux new-window` 로 새 창 생성 (window ref 기록)
-2. 새 창에서 `cmux browser open <url>` 실행
+1. `cmux new-window` 로 새 창 생성 (window ref 기록, 예: OK <window-uuid>)
+2. 새 창에서 `cmux browser open <url> --window <window-uuid>` 실행 — **반드시 --window 지정!** 생략하면 기존 pane에서 reuse됨
 3. `cmux browser <surface> wait --load-state complete` 로 로딩 대기
 4. `cmux browser <surface> snapshot --compact` 로 내용 읽기
 5. 필요 시 스크린샷: `cmux browser <surface> screenshot --out /tmp/<name>.png`
