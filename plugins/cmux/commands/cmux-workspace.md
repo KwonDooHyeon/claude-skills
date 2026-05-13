@@ -168,7 +168,7 @@ cmux 워크스페이스에 서브프로젝트별 Claude Code 세션이 떠있는
 1. **대상 세션 확인** — `cmux tree --all` 로 surface ref 찾기
 2. **사용자 요청을 구체화** — 단순 전달이 아니라 **목적·기대 결과·제약** 까지 포함한 자기 완결적 지시로 변환. 위임 메시지에는 반드시 **unique sentinel** 을 포함한다 ("위임 sentinel & 폴링 규약" 섹션 참조).
 3. **`cmux send` + `send-key Enter`** 로 송신
-4. **완료 폴링** — `timeout` + `grep -qF` (fixed string) 패턴 사용. sentinel 없는 폴링 / timeout 없는 폴링 금지. 자세한 패턴은 "위임 sentinel & 폴링 규약" 섹션 참조.
+4. **완료 폴링** — bash 내장 `SECONDS` 기반 deadline 패턴 + 파일 기반 sentinel (또는 fallback 으로 `grep -qF` fixed string). sentinel 없는 폴링 / 타임아웃 보호 없는 폴링 금지. 자세한 패턴은 "위임 sentinel & 폴링 규약" 섹션 참조.
 5. **결과 수집** — root 에서 `cmux read-screen` 으로 그 세션의 결과를 가져옴. 위임 메시지에 `<<<RESULT>>>` 블록 템플릿을 강제했다면 그 블록만 추출.
 6. **사용자에게 보고** — root 가 정리해서 최종 응답
 7. **코드 변경 동반 시** → 멀티 세션 디버깅 워크플로의 5~8단계 (errors/ 문서화) 까지 진행
@@ -249,10 +249,20 @@ cmux send-key --surface <ref> enter
 ```bash
 rm -f /tmp/cmux-done-<slug>   # baseline 보장: 송신 전 삭제
 # ... cmux send 로 위임 메시지 발사 ...
-timeout 900 bash -c 'until [ -f /tmp/cmux-done-<slug> ]; do sleep 15; done'
+bash -c '
+  deadline=$((SECONDS + 900))   # 상한 15분
+  until [ -f /tmp/cmux-done-<slug> ]; do
+    if [ $SECONDS -ge $deadline ]; then echo "TIMEOUT after 900s"; exit 124; fi
+    sleep 15
+  done
+  echo "DONE"
+'
 # 완료 후 결과 추출
 cat /tmp/cmux-result-<slug>.md
 ```
+
+**왜 `timeout` 명령을 안 쓰는가**:
+GNU `timeout` 은 macOS 기본 환경에 없다 (BSD 미포함). `brew install coreutils` 로 `gtimeout` 설치는 가능하지만 모든 머신에서 보장 못 함. 위 패턴은 bash 내장 `SECONDS` (subshell 시작부터의 경과 초) 만 사용해서 **모든 POSIX 환경에서 동작**.
 
 ##### 방식 B — 화면 출력 sentinel (fallback, 단순 작업만)
 
@@ -270,15 +280,23 @@ sub-session 이 파일시스템 접근을 거부하는 환경이거나 1줄짜�
   ```bash
   baseline=$(cmux read-screen --surface <ref> --scrollback --lines 500 | grep -cF "<<<DONE:<slug>>>>")
   # ... cmux send 로 위임 발사 ...
-  timeout 900 bash -c "until [ \$(cmux read-screen --surface <ref> --scrollback --lines 500 | grep -cF '<<<DONE:<slug>>>>') -gt $baseline ]; do sleep 15; done"
+  bash -c "
+    deadline=\$((SECONDS + 900))
+    until [ \$(cmux read-screen --surface <ref> --scrollback --lines 500 | grep -cF '<<<DONE:<slug>>>>') -gt $baseline ]; do
+      if [ \$SECONDS -ge \$deadline ]; then echo 'TIMEOUT after 900s'; exit 124; fi
+      sleep 15
+    done
+    echo 'DONE'
+  "
   ```
 - scrollback 포함이 필수 (화면이 스크롤돼서 baseline 라인이 사라지면 count 가 감소해 false-positive 발생)
 - TUI redraw 로 count 가 fluctuate 가능 — `-gt baseline` 조건이 잠시 만족됐다가 다시 떨어질 수 있음. 폴링 종료 후 read-screen 으로 실제 결과 존재 여부 사람이 검증.
 
 ##### 공통: 타임아웃 처리
 
+- **bash 내장 `SECONDS` 기반 패턴 강제** — GNU `timeout` / `gtimeout` 명령에 의존 금지 (macOS BSD 환경에 없음). `bash -c 'deadline=$((SECONDS+N)); until <cond>; do [ $SECONDS -ge $deadline ] && exit 124; sleep 15; done'` 형태가 표준.
 - 상한: 일반 작업 600초(10분), 긴 분석/리팩토링 1800초(30분). `sleep` 은 10~15초 (너무 짧으면 토큰 낭비).
-- 타임아웃 exit 124 시: 즉시 `cmux read-screen` 으로 마지막 화면 + (방식 A) `ls /tmp/cmux-*-<slug>*` 를 사용자에게 보고. 계속 기다릴지 / 중단할지 사용자가 결정.
+- 타임아웃 exit 124 (또는 `echo TIMEOUT`) 시: 즉시 `cmux read-screen` 으로 마지막 화면 + (방식 A) `ls /tmp/cmux-*-<slug>*` 를 사용자에게 보고. 계속 기다릴지 / 중단할지 사용자가 결정.
 - `run_in_background: true` 로 띄우되, **시작 시 sentinel 식별자와 예상 소요 시간을 사용자에게 알린다**.
 
 ##### 왜 이 규약이 필요한가
@@ -295,7 +313,7 @@ sub-session 이 파일시스템 접근을 거부하는 환경이거나 1줄짜�
 1. **대상 세션 판단** — 사용자의 질문 맥락으로 어느 세션에 전달할지 결정 (백엔드 버그는 voice_server, 프론트 버그는 voice-web 등)
 2. **필요 시 선행 조사** — 루트 세션에서 직접 읽을 수 있는 파일(로그, 소스 코드)을 먼저 확인해서 문제를 구체화. 가능하면 원인 가설까지 정리
 3. **질문/수정 요청을 해당 세션에 전송** — `cmux send` + `send-key Enter`로 구체적인 지시 전달. 증상, 예상 원인, 수정 방향을 명확히 작성
-4. **작업 완료 여부 확인** — "위임 sentinel & 폴링 규약" 의 sentinel + timeout 패턴 사용. unique sentinel 을 지시 메시지에 포함시키고 `timeout ... grep -qF` 로 폴링. 타임아웃 시 마지막 화면을 사용자에게 보고.
+4. **작업 완료 여부 확인** — "위임 sentinel & 폴링 규약" 의 파일 기반 sentinel + `SECONDS` deadline 패턴 사용. unique sentinel 을 지시 메시지에 포함시키고 `bash -c 'deadline=$((SECONDS+N)); until <cond>; do ...; sleep 15; done'` 로 폴링. 타임아웃 시 마지막 화면을 사용자에게 보고.
 5. **에러 문서 위치 결정 (모노레포 필수)** — 저장소 구조를 먼저 확인:
    - **단일 프로젝트** (루트 바로 아래 소스): `<repo_root>/errors/`
    - **모노레포** (루트 밑에 `engine/`, `web/`, `server/`, `mobile/` 등 서브프로젝트가 병렬): **수정한 코드가 속한 서브프로젝트의 `errors/` 사용**. 예: engine 버그는 `<repo_root>/engine/errors/`, web 버그는 `<repo_root>/web/errors/`
