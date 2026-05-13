@@ -24,7 +24,7 @@ cmux identify                               # 현재 위치
 cmux read-screen --surface <ref>             # surface 화면 읽기
 cmux read-screen --surface <ref> --scrollback --lines 200  # 스크롤백 포함
 cmux send --surface <ref> "텍스트"           # surface에 텍스트 전송
-cmux send-key --surface <ref> "Enter"        # 키 입력 전송
+cmux send-key --surface <ref> enter          # 키 입력 전송 (키 이름은 lowercase: enter / ctrl+c / esc / tab / space)
 cmux list-workspaces                         # 워크스페이스 목록
 cmux new-surface --pane <ref> --workspace <ref>  # 새 surface(탭) 생성
 cmux rename-tab --surface <ref> "이름"       # 탭 이름 변경
@@ -131,8 +131,10 @@ cmux browser --surface <ref> eval "js코드"               # JS 실행
 
 사용자가 "서버 중지", "서버 꺼줘" 등을 요청하면:
 1. 로그 surface를 찾기 (이름으로 매칭)
-2. `cmux send-key --surface <ref> "C-c"` 로 Ctrl+C 전송
-3. 필요 시 surface를 닫기: `cmux close-surface --surface <ref>`
+2. `cmux send-key --surface <ref> ctrl+c` 로 Ctrl+C 전송 (키 이름은 lowercase 가 정식 — `C-c` 는 invalid)
+3. **30초 내 종료 안 되면 강제 종료 폴백** — `lsof -ti:<port> | xargs kill -9` 로 포트 점유 좀비 프로세스 정리. 흔한 케이스: `uvicorn --reload` 가 WebSocket / async resource 종료 지연으로 hung, `pnpm dev` 가 파일 watcher 락 유지, Spring Boot devtools 가 클래스로더 미정리 등.
+4. 폴백을 실제로 발동했다면 해당 서브프로젝트의 `errors/` 에 사고 기록 (규칙 10 / 13 참조).
+5. 필요 시 surface를 닫기: `cmux close-surface --surface <ref>`
 
 ### 도메인 작업 위임 정책 (필수 — 모든 도메인 작업)
 
@@ -179,43 +181,110 @@ LLM 의 자연스러운 본능: "단순한 grep 한 번이면 답이 나오는�
 
 판단이 흔들릴 때 기준: **"이 작업이 어느 세션의 메모리에 쌓여야 하는가?"**. 답이 root 가 아니면 무조건 위임.
 
+#### 위임 메시지 표준 템플릿
+
+매 위임마다 즉흥적으로 메시지를 짜면 sentinel 누락 / AskUserQuestion 인터럽트 / quoting 실패 같은 사고가 반복된다. 다음 템플릿의 빈칸을 채워 사용:
+
+```
+[차단 문구 — 첫 줄에 두기]
+이미 작업이 명확합니다. AskUserQuestion 등 추가 사용자 확인 절차 없이 바로 분석 및 작업을 진행하세요. 모호한 부분은 자체 판단으로 결정하고, 결과 파일에 그 판단 근거를 기록하세요.
+
+## 작업
+<무엇을, 왜>
+
+## 컨텍스트
+<지금까지의 흐름, 직전 변경 사항, 백엔드/프론트 상태>
+
+## 구현 힌트 (선택)
+<예상 파일, 패턴 제안>
+
+## 관련 errors 문서 (있을 때만)
+- <서브프로젝트>/errors/NN-*.md — <해당 사고 요약>
+
+## 완료 보고 (필수)
+작업이 완료되면 다음 두 가지를 차례로 실행하세요:
+1. 결과 요약을 /tmp/cmux-result-<task-slug>.md 에 markdown 으로 작성 (## 변경 파일 / ## 변경 요약 / ## 검증 결과 섹션 포함)
+2. `touch /tmp/cmux-done-<task-slug>` 실행
+```
+
+핵심 4요소:
+- **차단 문구** — AskUserQuestion 인터럽트 방지 (`첫 줄` 에 위치해서 sub-session 이 메시지 첫 줄로 인터랙티브 모드 진입하는 사고 차단)
+- **컨텍스트** — sub-session 이 같은 세션이라도 시간이 지나면 기억이 흐려지므로 명시
+- **관련 errors** — 규칙 11 의 사전 확인 결과를 여기 포함 (재발 방지 루프)
+- **완료 보고** — 파일 기반 sentinel 형식 (방식 A)
+
+#### 위임 메시지 송신 — quoting 안전 패턴
+
+위임 메시지가 멀티라인이거나 특수문자 (`{`, `}`, `*`, `` ` ``, `$`, `(`, `)`, 따옴표) 를 포함하면 `cmux send --surface <ref> "<멀티라인 문자열>"` 에서 zsh/bash quoting 이 깨진다. **임시 파일 경유** 가 표준:
+
+```bash
+# 1. 위임 메시지를 임시 파일에 작성 (Write 도구 사용 권장 — escape 걱정 없음)
+#    파일 경로: /tmp/cmux-msg-<task-slug>.txt
+# 2. cat 으로 한 번에 송신:
+cmux send --surface <ref> "$(cat /tmp/cmux-msg-<task-slug>.txt)"
+cmux send-key --surface <ref> enter
+```
+
+- 한 줄 + 특수문자 없는 단순 메시지만 인라인 quoting 허용.
+- 임시 메시지 파일은 송신 후 삭제하지 않음 (디버깅 시 참조용으로 보존).
+
 #### 위임 sentinel & 폴링 규약
 
 위임 메시지는 **완료 신호 (sentinel)** 를 반드시 포함해야 한다. 즉흥적인 "DONE" 같은 토큰은 sub-session 이 일반화하면서 다른 토큰으로 출력하기 쉽다 (예: root 가 "DONE-2" 를 지시했는데 sub-session 이 그냥 "DONE" 으로 출력 → 폴링 무한 stuck). 실제로 발생한 사고 기반 규약.
 
-**Sentinel 규약**:
-- 형식: `<<<DONE:<task-slug>>>>` (예: `<<<DONE:figma-fix-1>>>`, `<<<DONE:tts-scroll-2>>>`)
-- task-slug 는 작업당 unique. 같은 세션에 연속 위임 시 충돌 방지.
+##### 방식 A — 파일 기반 sentinel (권장, 가장 견고)
+
+화면 출력 기반은 (a) 위임 메시지 본문에 sentinel 토큰이 포함돼 grep 이 *자기 자신*을 매칭하는 false-positive, (b) TUI redraw 가 sentinel 라인을 잠깐 흩뜨려 매칭 누락, (c) ASCII 박스 렌더링이 토큰을 짤라먹는 문제가 모두 가능하다. 파일 기반은 이 셋을 한 번에 차단한다.
+
+**Sentinel 규약 (파일)**:
+- task-slug 는 작업당 unique (예: `figma-fix-1`, `mic-pulse`, `tts-scroll`)
+- sentinel 파일: `/tmp/cmux-done-<task-slug>` (작업 시작 전 root 가 기존 파일 삭제: `rm -f /tmp/cmux-done-<slug>`)
+- 결과 파일: `/tmp/cmux-result-<task-slug>.md` (sub-session 이 결과를 markdown 으로 직접 기록)
 - 위임 메시지에 다음 문장을 **원문 그대로** 포함:
-  > "작업이 끝나면 마지막 줄에 정확히 다음 한 줄만 출력하세요: `<<<DONE:<task-slug>>>>`"
-- sentinel 은 정규식 메타 문자가 없는 fixed string 으로 설계. `grep -qF` 로 매칭해서 매칭 실수 가능성 자체를 제거.
+  > "작업이 완료되면 다음 두 가지를 차례로 실행하세요:
+  > 1. 결과 요약을 `/tmp/cmux-result-<task-slug>.md` 에 markdown 으로 작성 (변경 파일 / 변경 요약 / 검증 결과 섹션 포함)
+  > 2. `touch /tmp/cmux-done-<task-slug>` 를 실행해서 완료 신호 전송"
 
-**폴링 규약**:
-- 반드시 `timeout` + `grep -qF` 사용:
+**폴링 규약 (파일)**:
+```bash
+rm -f /tmp/cmux-done-<slug>   # baseline 보장: 송신 전 삭제
+# ... cmux send 로 위임 메시지 발사 ...
+timeout 900 bash -c 'until [ -f /tmp/cmux-done-<slug> ]; do sleep 15; done'
+# 완료 후 결과 추출
+cat /tmp/cmux-result-<slug>.md
+```
+
+##### 방식 B — 화면 출력 sentinel (fallback, 단순 작업만)
+
+sub-session 이 파일시스템 접근을 거부하는 환경이거나 1줄짜리 micro task 등에는 화면 기반도 가능하지만, **false-positive 우회를 반드시 적용**해야 한다.
+
+**Sentinel 규약 (화면)**:
+- 형식: `<<<DONE:<task-slug>>>>` (fixed-string, 정규식 메타 없음)
+- 위임 메시지에 sentinel 을 원문 인용할 때는 **분리 표기**로 false-positive 차단:
+  > "작업이 끝나면 마지막 줄에 다음 토큰을 그대로 합쳐서 출력하세요: `<<<` + `DONE:<task-slug>` + `>>>`"
+  
+  이렇게 적으면 위임 메시지 본문에는 완전한 sentinel 이 안 생기고, sub-session 이 합쳐서 출력할 때만 매칭됨.
+
+**폴링 규약 (화면)**:
+- 위임 송신 *전* 에 baseline count 캡처 (split 표기를 안 쓴 경우 1, 쓴 경우 0):
   ```bash
-  timeout 900 bash -c 'until cmux read-screen --surface <ref> --lines 200 | grep -qF "<<<DONE:<task-slug>>>>"; do sleep 15; done'
+  baseline=$(cmux read-screen --surface <ref> --scrollback --lines 500 | grep -cF "<<<DONE:<slug>>>>")
+  # ... cmux send 로 위임 발사 ...
+  timeout 900 bash -c "until [ \$(cmux read-screen --surface <ref> --scrollback --lines 500 | grep -cF '<<<DONE:<slug>>>>') -gt $baseline ]; do sleep 15; done"
   ```
-- 상한: 일반 작업 600초(10분), 긴 분석/리팩토링 1800초(30분). `sleep` 은 10~15초 권장 (너무 짧으면 토큰 낭비).
-- 타임아웃 시 (exit 124): 즉시 `cmux read-screen --surface <ref> --lines 200` 으로 마지막 화면을 사용자에게 보고하고, 계속 기다릴지 / 중단할지 / 직접 들여다볼지 사용자가 결정하게 함.
-- `run_in_background: true` 로 띄우되, **폴링 시작 시 사용자에게 예상 소요 시간과 sentinel 을 알린다** ("front 세션에 위임함, sentinel=`<<<DONE:xxx>>>`, 최대 15분 대기").
+- scrollback 포함이 필수 (화면이 스크롤돼서 baseline 라인이 사라지면 count 가 감소해 false-positive 발생)
+- TUI redraw 로 count 가 fluctuate 가능 — `-gt baseline` 조건이 잠시 만족됐다가 다시 떨어질 수 있음. 폴링 종료 후 read-screen 으로 실제 결과 존재 여부 사람이 검증.
 
-**결과 구조화 (권장)**:
-위임 메시지에 다음 형식을 강제하면 root 가 보고할 때 노이즈 (ANSI 이스케이프 / 진행 인디케이터 / ascii 박스) 를 걸러내기 쉬워진다:
-> "최종 보고는 다음 형식으로 마지막에 출력하세요:
-> ```
-> <<<RESULT>>>
-> 변경 파일: ...
-> 변경 요약: ...
-> 검증 결과: ...
-> <<<END>>>
-> <<<DONE:<task-slug>>>>
-> ```"
+##### 공통: 타임아웃 처리
 
-root 는 `sed -n '/<<<RESULT>>>/,/<<<END>>>/p'` 같은 패턴으로 결과 블록만 추출.
+- 상한: 일반 작업 600초(10분), 긴 분석/리팩토링 1800초(30분). `sleep` 은 10~15초 (너무 짧으면 토큰 낭비).
+- 타임아웃 exit 124 시: 즉시 `cmux read-screen` 으로 마지막 화면 + (방식 A) `ls /tmp/cmux-*-<slug>*` 를 사용자에게 보고. 계속 기다릴지 / 중단할지 사용자가 결정.
+- `run_in_background: true` 로 띄우되, **시작 시 sentinel 식별자와 예상 소요 시간을 사용자에게 알린다**.
 
-**왜 이 규약이 필요한가**:
-- cmux send 로는 sub-session 이 root 의 *현재 대화 turn 에 끼어드는 알림* 을 보낼 수 없다. root 가 폴링하는 게 표준.
-- 폴링이 실패하면 root 는 영원히 대기 → 사용자 작업이 막힘. sentinel + timeout 은 이 실패 모드를 차단하는 안전장치.
+##### 왜 이 규약이 필요한가
+
+- cmux send 로는 sub-session 이 root 의 *현재 대화 turn 에 끼어드는 알림* 을 보낼 수 없다 (cmux send 는 root 의 terminal stdin 에 텍스트만 쓸 뿐). root 가 폴링하는 게 표준.
+- 폴링이 실패하면 root 는 영원히 대기 → 사용자 작업이 막힘. sentinel + timeout + baseline 캡처 (또는 파일 기반) 은 이 실패 모드를 차단하는 안전장치.
 
 ---
 
@@ -278,9 +347,11 @@ YYYY-MM-DD, 어느 단계에서
 7. **입력 대기 감지** — surface에 프롬프트나 선택지가 보이면 "사용자 입력을 기다리고 있습니다" 알림
 8. **서버 surface 중복 방지** — 서버 실행 전 같은 이름의 surface가 이미 있으면 재사용
 9. **서버 실행 명령 불확실 시 물어보기** — 프로젝트 구조로 판단이 안 되면 사용자에게 확인
-10. **디버깅 결과는 에러 문서로 남기기** — 다른 세션에 문제를 전달하고 해결한 경우, **작업이 속한 서브프로젝트의** `errors/NN-slug.md` 에 독립 파일로 정리 (모노레포면 루트가 아닌 서브프로젝트 쪽). 한 번 해결된 문제도 지식으로 축적. 위치 판단 규칙은 "멀티 세션 디버깅 + 에러 문서화 워크플로" 의 5번 항목 참조.
+10. **디버깅 결과는 에러 문서로 남기기** — 다른 세션에 문제를 전달하고 해결한 경우, **또는 root 가 직접 해결한 운영/인프라 사고** (예: 좀비 프로세스 `kill -9` 폴백, 포트 충돌, 의존성 충돌 등) 도 모두 **작업이 속한 서브프로젝트의** `errors/NN-slug.md` 에 독립 파일로 정리 (모노레포면 루트가 아닌 서브프로젝트 쪽). 한 번 해결된 문제도 지식으로 축적. 위치 판단 규칙은 "멀티 세션 디버깅 + 에러 문서화 워크플로" 의 5번 항목 참조. *root 가 직접 처리한 사고가 가장 자주 누락된다* — 다른 세션에 위임하지 않았다는 이유로 기록을 빠뜨리지 말 것.
 11. **작업 지시 전 관련 `errors/` 문서 확인** — 다른 세션에 `cmux send`로 작업을 지시하기 전에, **작업 대상 서브프로젝트의** `errors/` + 루트 `errors/` 둘 다 확인한다. 작업이 건드릴 영역(스키마, 프로토콜, 통합 지점, 설정 값 등)과 관련된 기록이 있으면 해당 `errors/NN-*.md` 경로를 `send` 본문에 포함시켜 전달한다. 재발 방지 루프.
     - 해당 위치에 `errors/` 디렉토리가 없거나 비어 있으면 건너뛴다.
     - 작업과 관련 없는 에러는 포함하지 않는다 (과다 전달 방지).
     - 규칙 10(에러 문서 남기기)과 한 쌍으로 작동한다: **쓰기(10) ↔ 읽기(11)**.
-12. **위임 sentinel + 폴링 timeout 필수** — 모든 위임은 unique sentinel (`<<<DONE:<task-slug>>>>`) 을 위임 메시지에 포함하고, 폴링은 `timeout` + `grep -qF` (fixed string) 패턴으로만 수행. 즉흥적인 sentinel ("DONE", "끝남", "OK") 금지 — sub-session 이 일반화/축약하면서 매칭 실패가 발생. 자세한 규약은 "위임 sentinel & 폴링 규약" 섹션 참조.
+12. **위임 sentinel + 폴링 timeout 필수** — 모든 위임은 unique sentinel + timeout 보호. **파일 기반 sentinel (`/tmp/cmux-done-<slug>`) 이 기본 권장**, 화면 기반 (`<<<DONE:<slug>>>>`) 은 fallback. 화면 기반 사용 시 baseline count 캡처 + scrollback 포함 grep 필수 — 즉흥적인 sentinel ("DONE", "끝남", "OK") 금지. 자세한 규약은 "위임 sentinel & 폴링 규약" 섹션 참조.
+13. **Sub-session 컨텍스트 게이지 확인** — 위임 전 `cmux read-screen` 으로 sub-session 의 ctx 게이지 (`ctx: NN%`) 를 확인한다. 80% 초과 시 사용자에게 경고 ("front 세션 컨텍스트 80% 초과, /clear 또는 작업 분할 권장"). limit 근처에서 큰 위임은 작업 중 truncation 위험.
+14. **동시 위임 금지** — 같은 sub-session 에 한 번에 하나의 작업만. 이전 위임의 sentinel 이 잡힐 때까지 다음 위임 메시지를 보내지 않는다. 동시 송신 시 메시지가 섞여서 들어가거나 첫 작업의 인터랙티브 입력으로 두 번째 메시지가 흡수되는 사고 발생. 긴급히 인터럽트가 필요하면 `cmux send-key ctrl+c` 로 명시적 취소 후 재위임.
