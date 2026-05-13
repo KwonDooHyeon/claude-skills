@@ -164,10 +164,10 @@ cmux 워크스페이스에 서브프로젝트별 Claude Code 세션이 떠있는
 #### 위임 절차
 
 1. **대상 세션 확인** — `cmux tree --all` 로 surface ref 찾기
-2. **사용자 요청을 구체화** — 단순 전달이 아니라 **목적·기대 결과·제약** 까지 포함한 자기 완결적 지시로 변환
+2. **사용자 요청을 구체화** — 단순 전달이 아니라 **목적·기대 결과·제약** 까지 포함한 자기 완결적 지시로 변환. 위임 메시지에는 반드시 **unique sentinel** 을 포함한다 ("위임 sentinel & 폴링 규약" 섹션 참조).
 3. **`cmux send` + `send-key Enter`** 로 송신
-4. **완료 폴링** — `until cmux read-screen --surface <ref> | grep -qE "<완료 시그널>"; do sleep 3; done` 패턴으로 끝까지 대기
-5. **결과 수집** — root 에서 `cmux read-screen` 으로 그 세션의 결과를 가져옴
+4. **완료 폴링** — `timeout` + `grep -qF` (fixed string) 패턴 사용. sentinel 없는 폴링 / timeout 없는 폴링 금지. 자세한 패턴은 "위임 sentinel & 폴링 규약" 섹션 참조.
+5. **결과 수집** — root 에서 `cmux read-screen` 으로 그 세션의 결과를 가져옴. 위임 메시지에 `<<<RESULT>>>` 블록 템플릿을 강제했다면 그 블록만 추출.
 6. **사용자에게 보고** — root 가 정리해서 최종 응답
 7. **코드 변경 동반 시** → 멀티 세션 디버깅 워크플로의 5~8단계 (errors/ 문서화) 까지 진행
 
@@ -179,6 +179,44 @@ LLM 의 자연스러운 본능: "단순한 grep 한 번이면 답이 나오는�
 
 판단이 흔들릴 때 기준: **"이 작업이 어느 세션의 메모리에 쌓여야 하는가?"**. 답이 root 가 아니면 무조건 위임.
 
+#### 위임 sentinel & 폴링 규약
+
+위임 메시지는 **완료 신호 (sentinel)** 를 반드시 포함해야 한다. 즉흥적인 "DONE" 같은 토큰은 sub-session 이 일반화하면서 다른 토큰으로 출력하기 쉽다 (예: root 가 "DONE-2" 를 지시했는데 sub-session 이 그냥 "DONE" 으로 출력 → 폴링 무한 stuck). 실제로 발생한 사고 기반 규약.
+
+**Sentinel 규약**:
+- 형식: `<<<DONE:<task-slug>>>>` (예: `<<<DONE:figma-fix-1>>>`, `<<<DONE:tts-scroll-2>>>`)
+- task-slug 는 작업당 unique. 같은 세션에 연속 위임 시 충돌 방지.
+- 위임 메시지에 다음 문장을 **원문 그대로** 포함:
+  > "작업이 끝나면 마지막 줄에 정확히 다음 한 줄만 출력하세요: `<<<DONE:<task-slug>>>>`"
+- sentinel 은 정규식 메타 문자가 없는 fixed string 으로 설계. `grep -qF` 로 매칭해서 매칭 실수 가능성 자체를 제거.
+
+**폴링 규약**:
+- 반드시 `timeout` + `grep -qF` 사용:
+  ```bash
+  timeout 900 bash -c 'until cmux read-screen --surface <ref> --lines 200 | grep -qF "<<<DONE:<task-slug>>>>"; do sleep 15; done'
+  ```
+- 상한: 일반 작업 600초(10분), 긴 분석/리팩토링 1800초(30분). `sleep` 은 10~15초 권장 (너무 짧으면 토큰 낭비).
+- 타임아웃 시 (exit 124): 즉시 `cmux read-screen --surface <ref> --lines 200` 으로 마지막 화면을 사용자에게 보고하고, 계속 기다릴지 / 중단할지 / 직접 들여다볼지 사용자가 결정하게 함.
+- `run_in_background: true` 로 띄우되, **폴링 시작 시 사용자에게 예상 소요 시간과 sentinel 을 알린다** ("front 세션에 위임함, sentinel=`<<<DONE:xxx>>>`, 최대 15분 대기").
+
+**결과 구조화 (권장)**:
+위임 메시지에 다음 형식을 강제하면 root 가 보고할 때 노이즈 (ANSI 이스케이프 / 진행 인디케이터 / ascii 박스) 를 걸러내기 쉬워진다:
+> "최종 보고는 다음 형식으로 마지막에 출력하세요:
+> ```
+> <<<RESULT>>>
+> 변경 파일: ...
+> 변경 요약: ...
+> 검증 결과: ...
+> <<<END>>>
+> <<<DONE:<task-slug>>>>
+> ```"
+
+root 는 `sed -n '/<<<RESULT>>>/,/<<<END>>>/p'` 같은 패턴으로 결과 블록만 추출.
+
+**왜 이 규약이 필요한가**:
+- cmux send 로는 sub-session 이 root 의 *현재 대화 turn 에 끼어드는 알림* 을 보낼 수 없다. root 가 폴링하는 게 표준.
+- 폴링이 실패하면 root 는 영원히 대기 → 사용자 작업이 막힘. sentinel + timeout 은 이 실패 모드를 차단하는 안전장치.
+
 ---
 
 ### 멀티 세션 디버깅 + 에러 문서화 워크플로
@@ -188,7 +226,7 @@ LLM 의 자연스러운 본능: "단순한 grep 한 번이면 답이 나오는�
 1. **대상 세션 판단** — 사용자의 질문 맥락으로 어느 세션에 전달할지 결정 (백엔드 버그는 voice_server, 프론트 버그는 voice-web 등)
 2. **필요 시 선행 조사** — 루트 세션에서 직접 읽을 수 있는 파일(로그, 소스 코드)을 먼저 확인해서 문제를 구체화. 가능하면 원인 가설까지 정리
 3. **질문/수정 요청을 해당 세션에 전송** — `cmux send` + `send-key Enter`로 구체적인 지시 전달. 증상, 예상 원인, 수정 방향을 명확히 작성
-4. **작업 완료 여부 확인** — `cmux read-screen --surface <ref>`로 해당 세션이 답변/수정을 끝냈는지 주기적으로 확인. 여전히 진행 중이면 완료까지 대기
+4. **작업 완료 여부 확인** — "위임 sentinel & 폴링 규약" 의 sentinel + timeout 패턴 사용. unique sentinel 을 지시 메시지에 포함시키고 `timeout ... grep -qF` 로 폴링. 타임아웃 시 마지막 화면을 사용자에게 보고.
 5. **에러 문서 위치 결정 (모노레포 필수)** — 저장소 구조를 먼저 확인:
    - **단일 프로젝트** (루트 바로 아래 소스): `<repo_root>/errors/`
    - **모노레포** (루트 밑에 `engine/`, `web/`, `server/`, `mobile/` 등 서브프로젝트가 병렬): **수정한 코드가 속한 서브프로젝트의 `errors/` 사용**. 예: engine 버그는 `<repo_root>/engine/errors/`, web 버그는 `<repo_root>/web/errors/`
@@ -245,3 +283,4 @@ YYYY-MM-DD, 어느 단계에서
     - 해당 위치에 `errors/` 디렉토리가 없거나 비어 있으면 건너뛴다.
     - 작업과 관련 없는 에러는 포함하지 않는다 (과다 전달 방지).
     - 규칙 10(에러 문서 남기기)과 한 쌍으로 작동한다: **쓰기(10) ↔ 읽기(11)**.
+12. **위임 sentinel + 폴링 timeout 필수** — 모든 위임은 unique sentinel (`<<<DONE:<task-slug>>>>`) 을 위임 메시지에 포함하고, 폴링은 `timeout` + `grep -qF` (fixed string) 패턴으로만 수행. 즉흥적인 sentinel ("DONE", "끝남", "OK") 금지 — sub-session 이 일반화/축약하면서 매칭 실패가 발생. 자세한 규약은 "위임 sentinel & 폴링 규약" 섹션 참조.
