@@ -402,3 +402,15 @@ YYYY-MM-DD, 어느 단계에서
 12. **위임 sentinel + 폴링 timeout 필수** — 모든 위임은 unique sentinel + timeout 보호. **파일 기반 sentinel (`/tmp/cmux-done-<slug>`) 이 기본 권장**, 화면 기반 (`<<<DONE:<slug>>>>`) 은 fallback. 화면 기반 사용 시 baseline count 캡처 + scrollback 포함 grep 필수 — 즉흥적인 sentinel ("DONE", "끝남", "OK") 금지. 자세한 규약은 "위임 sentinel & 폴링 규약" 섹션 참조.
 13. **Sub-session 컨텍스트 게이지 확인** — 위임 전 `cmux read-screen` 으로 sub-session 의 ctx 게이지 (`ctx: NN%`) 를 확인한다. 80% 초과 시 사용자에게 경고 ("front 세션 컨텍스트 80% 초과, /clear 또는 작업 분할 권장"). limit 근처에서 큰 위임은 작업 중 truncation 위험.
 14. **동시 위임 금지** — 같은 sub-session 에 한 번에 하나의 작업만. 이전 위임의 sentinel 이 잡힐 때까지 다음 위임 메시지를 보내지 않는다. 동시 송신 시 메시지가 섞여서 들어가거나 첫 작업의 인터랙티브 입력으로 두 번째 메시지가 흡수되는 사고 발생. 긴급히 인터럽트가 필요하면 `cmux send-key ctrl+c` 로 명시적 취소 후 재위임.
+15. **Claude Code TUI 의 자동완성 ghost text 를 실제 입력으로 오인 금지** — `cmux read-screen` 으로 sub-session 의 프롬프트 영역에 텍스트가 보여도 그게 **자동완성 ghost text** (이전 명령 history 미리보기) 일 수 있다. 실제 입력 buffer 는 비어 있는 상태. 구분 방법:
+    - **`-- INSERT --` 표시가 있으면 실제 입력**. 없거나 다른 상태 표시면 ghost text 가능성 큼.
+    - ghost text 의 텍스트는 보통 dim(흐릿) 표시지만 `cmux read-screen` 은 색상 정보를 포기하므로 화면 텍스트만으로는 구분 어려움.
+    - **확실한 판정 방법**: `cmux send-key backspace` 한 번 보내고 다시 `read-screen` → 텍스트가 그대로면 ghost, 한 글자 줄면 실제 입력.
+    - ghost text 면 `backspace` / `ctrl+u` / `ctrl+c` / `esc` 모두 무의미 (지울 게 없음). 이걸 반복하며 시간 낭비 금지.
+    - ghost 가 보이는 상태에서 그냥 `cmux send` 로 새 텍스트 보내면 ghost 가 사라지고 새 텍스트가 정상 입력된다 — 별도 클리어 절차 불필요.
+    - 의심이 1초라도 들면 즉시 사용자에게 한 줄 확인 ("프롬프트의 X 텍스트가 실제 입력인지 ghost text 인지 알려달라"). 키 조합 4~5개 시도하며 추정하는 것보다 훨씬 빠르다.
+16. **긴 메시지 `cmux send` 의 paste expansion / timeout 처리** — 1KB 가 넘는 메시지를 `cmux send` 로 보내면 Claude Code TUI 가 "paste expansion" 모드로 진입하면서 `cmux send` 응답이 늦어 **timeout 으로 보이지만 실제 텍스트는 정상 입력된 경우가 많다**. 처리 절차:
+    1. `cmux send` timeout 직후 **반드시 `cmux read-screen` 으로 실제 입력 상태 먼저 확인**. 화면에 메시지 일부가 보이면 입력 성공.
+    2. 화면 마지막에 `paste again to expand` 표시가 있으면 Claude Code 가 큰 paste 를 축약 표시 중. 그래도 입력은 들어간 상태. `cmux send-key enter` 만 보내면 submit.
+    3. 입력이 정말 안 들어갔으면 메시지를 1KB 이내로 줄여서 재시도 (자세한 컨텍스트는 위키 경로 참조로 대체).
+    4. timeout 만 보고 곧장 같은 메시지를 재전송하면 두 번 입력되어 sub-session 이 혼란 — 반드시 read-screen 으로 1차 시도 결과 확인 후 재시도 여부 결정.
