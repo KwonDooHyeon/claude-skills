@@ -1,7 +1,7 @@
 ---
-allowed-tools: Write, Bash(date:*, echo:*)
-description: 직전 AI 답변에서 핵심 정보(TL;DR / 결정 / 트레이드오프 / 다음 액션 / Insight)만 추출해 HTML 카드 레이아웃으로 렌더링. /tmp 에 저장 후 file:// URL 만 반환 (자동 오픈 X). 트리거: "/html", "HTML로 보여줘", "이거 시각화", "핵심만 html", "html 로 정리".
-argument-hint: (인자 없음 — 직전 AI 답변을 대상으로 함)
+allowed-tools: 'Write, Bash(date *)'
+description: '직전 AI 답변에서 핵심 정보(TL;DR / 결정 / 트레이드오프 / 다음 액션 / Insight)만 추출해 HTML 카드 레이아웃으로 렌더링. /tmp 에 저장 후 file:// URL 만 반환 (자동 오픈 X). 트리거 키워드 — /html, HTML로 보여줘, 이거 시각화, 핵심만 html, html 로 정리.'
+argument-hint: '(인자 없음 — 직전 AI 답변을 대상으로 함)'
 ---
 
 # /html — 직전 답변 핵심 추출 + HTML 렌더링
