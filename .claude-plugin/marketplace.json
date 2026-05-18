@@ -23,6 +23,15 @@
       },
       "source": "./plugins/git",
       "category": "development"
+    },
+    {
+      "name": "dh-html",
+      "description": "직전 AI 답변에서 핵심 정보를 추출해 HTML 카드 대시보드로 렌더링 — /tmp 저장 후 file:// URL 반환",
+      "author": {
+        "name": "KwonDooHyeon"
+      },
+      "source": "./plugins/html",
+      "category": "productivity"
     }
   ]
 }
