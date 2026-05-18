@@ -322,7 +322,7 @@ sub-session 이 파일시스템 접근을 거부하는 환경이거나 1줄짜�
 6. **에러 문서 작성** — 결정된 디렉토리에 독립 파일로 정리:
    - 디렉토리가 없으면 새로 생성 (`mkdir -p <path>`) + 해당 디렉토리의 `README.md` 신설 (목차 테이블 + 작성 규칙)
    - 파일명: `NN-short-slug.md` (2자리 순번, **해당 디렉토리 내** 기존 중 가장 큰 번호 +1). 다른 디렉토리의 번호와는 독립
-   - 섹션: **발생 시점 / 증상(원문 로그 포함) / 원인 / 해결 방법(코드 포함) / 교훈**
+   - 구조: **frontmatter (메타데이터) + 섹션 (발생 시점 / 증상(원문 로그 포함) / 원인 / 해결 방법(코드 포함) / 교훈)**
    - 한 파일 = 하나의 문제 (몰아넣지 말 것)
 7. **목차 업데이트** — 해당 디렉토리의 `README.md` 목차 테이블에 새 항목 추가. 상태 표시(✅ 해결 / 🔄 진행 중) 포함
 8. **사용자 보고** — 원인과 해결 내용을 간결히 보고하고, 작성한 에러 문서 경로를 명시 (어느 `errors/` 인지 포함)
@@ -333,6 +333,16 @@ sub-session 이 파일시스템 접근을 거부하는 환경이거나 1줄짜�
 **에러 문서 템플릿:**
 
 ```markdown
+---
+id: "NN"
+date: YYYY-MM-DD
+title: 한 줄 요약
+category: <환경 설정 | 네트워크 | 백엔드 | 프론트엔드 | 백엔드+프론트 | 개발 도구 | 인프라 | 아키텍처>
+status: <resolved | in-progress>
+area: <backend | frontend | fullstack | tooling | infra>
+tags: [keyword1, keyword2, keyword3]
+---
+
 # [NN] 제목 — 한 줄 요약
 
 ## 발생 시점
@@ -350,6 +360,25 @@ YYYY-MM-DD, 어느 단계에서
 ## 교훈 (선택)
 유사 문제 재발 방지를 위한 인사이트
 ```
+
+**Frontmatter 필드 가이드** (모두 필수, `tags` 만 빈 배열 허용):
+
+- `id` — 파일명의 `NN` 과 동일 (문자열, 두 자리 zero-pad). 예: `"01"`, `"11"`
+- `date` — 발생 일자 `YYYY-MM-DD`. 본문의 "발생 시점" 과 일치
+- `title` — H1 의 "— " 뒤 한 줄 요약과 동일
+- `category` — 사고 분류. **enum 외 값이 필요하면 이 템플릿에 추가 후 사용** (자유 입력 금지 — 일관성 깨짐)
+- `status` — `resolved` 또는 `in-progress` (이모지 ✅/🔄 대신 영문 enum)
+- `area` — 코드 영역. **도메인 위임 라우팅의 힌트**로 사용 (백엔드 사고는 back 세션에 자동 첨부)
+- `tags` — 검색 키워드 배열. 본문에서 핵심 명사·라이브러리·에러 키 추출 (예: `[docker, daemon, macos]`, `[websocket, openai-realtime, race-condition]`). **소문자 + 하이픈** 컨벤션
+
+**왜 frontmatter 인가** (옵션 D 채택 이유):
+
+- 메타데이터 단일 출처화 — 현재 README 의 카테고리/상태 컬럼은 본문과 drift 위험. frontmatter 가 truth, README 는 산출물
+- 도메인 위임 워크플로의 "관련 errors 자동 첨부" (규칙 11) 를 tag/area 매칭으로 자동화 가능
+- 본문 단독으로 self-contained — README 없이도 사고 1건의 분류/상태 파악 가능
+- 점진 도입 — 기존 .md 는 그대로 둬도 동작. 새로 작성하는 사고부터 적용, 기존은 errors/ 참조 시 자연스럽게 마이그레이션
+
+**기존 frontmatter 없는 파일 발견 시** — 본문 그대로 두고, 해당 사고를 다시 참조하게 될 때 frontmatter 만 추가하는 lazy migration 패턴 권장. 일괄 마이그레이션 금지 (의미 없는 대량 diff 발생).
 
 ---
 
