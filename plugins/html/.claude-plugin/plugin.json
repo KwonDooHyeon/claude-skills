@@ -1,6 +1,6 @@
 {
   "name": "dh-html",
-  "description": "직전 AI 답변에서 핵심 정보를 추출해 HTML로 렌더링 — /tmp 에 저장 후 file:// URL 반환",
+  "description": "직전 AI 답변을 sidebar TOC + 다크모드 대응 테크닥 스타일의 HTML로 렌더링 — /tmp 에 저장 후 file:// URL 반환",
   "author": {
     "name": "KwonDooHyeon"
   }
