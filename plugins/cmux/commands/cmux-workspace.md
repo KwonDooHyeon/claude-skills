@@ -213,20 +213,41 @@ LLM 의 자연스러운 본능: "단순한 grep 한 번이면 답이 나오는�
 - **관련 errors** — 규칙 11 의 사전 확인 결과를 여기 포함 (재발 방지 루프)
 - **완료 보고** — 파일 기반 sentinel 형식 (방식 A)
 
-#### 위임 메시지 송신 — quoting 안전 패턴
+#### 위임 메시지 송신 — 메타 메시지 + 파일 경로 패턴
 
-위임 메시지가 멀티라인이거나 특수문자 (`{`, `}`, `*`, `` ` ``, `$`, `(`, `)`, 따옴표) 를 포함하면 `cmux send --surface <ref> "<멀티라인 문자열>"` 에서 zsh/bash quoting 이 깨진다. **임시 파일 경유** 가 표준:
+`cmux send` 는 두 가지 한계가 있다:
+
+1. **quoting 깨짐** — 멀티라인 / 특수문자 (`{`, `}`, `*`, `` ` ``, `$`, `(`, `)`, 따옴표) 포함 시 zsh/bash quoting 사고
+2. **크기 hang** — 약 6 KB / 60+ 줄 이상 메시지에서 `cmux send "$(cat <file>)"` 가 60~180 초 timeout 으로 hang (TUI 입력 버퍼 reflow / paste-mode 핸드셰이크 지연). 정확 임계값은 미측정이나 1 KB / 수 줄 이하만 안전.
+
+→ 이전 표준이었던 `cmux send "$(cat <file>)"` 는 1번 문제는 해결했지만 2번에서 깨진다. 두 문제를 동시에 차단하려면 **메타 메시지 + 파일 경로** 패턴:
 
 ```bash
-# 1. 위임 메시지를 임시 파일에 작성 (Write 도구 사용 권장 — escape 걱정 없음)
+# 1. 위임 본문은 항상 파일에 작성 (Write 도구 사용 — escape 걱정 없음)
 #    파일 경로: /tmp/cmux-msg-<task-slug>.txt
-# 2. cat 으로 한 번에 송신:
-cmux send --surface <ref> "$(cat /tmp/cmux-msg-<task-slug>.txt)"
+
+# 2. cmux send 로는 짧은 메타 메시지만 송신 — 본문 인라인 금지:
+cmux send --surface <ref> "AskUserQuestion 없이 진행. /tmp/cmux-msg-<task-slug>.txt 를 Read 도구로 읽고 그 안의 지시 그대로 수행. 완료 시 sentinel touch."
 cmux send-key --surface <ref> enter
 ```
 
-- 한 줄 + 특수문자 없는 단순 메시지만 인라인 quoting 허용.
-- 임시 메시지 파일은 송신 후 삭제하지 않음 (디버깅 시 참조용으로 보존).
+규칙:
+
+- 메타 메시지는 **한 줄, ~150 자 이내, 특수문자 적게** — cmux send 안전 영역
+- 첫 부분에 "AskUserQuestion 없이 진행" 차단 문구 (도메인 위임 정책 표준)
+- 파일 경로는 **절대경로**로 명시 (sub-session 의 cwd 와 무관하게 작동)
+- 임시 메시지 파일은 송신 후 삭제하지 않음 (디버깅 / 재참조용)
+
+부수 효과:
+
+- 메타 메시지에는 본문의 sentinel 토큰이 없음 → 화면 기반 sentinel 의 false-positive 회피와 자연 정합 (단 본 표준은 파일 기반 sentinel 이 기본이라 부차적)
+- sub-session 의 read-screen 출력에 위임 본문이 한 화면 가득 안 찍힘 → 디버깅 시 화면 가독성 ↑
+
+비용: sub-session 의 첫 액션이 "Read 한 번 더" 인 점. 토큰 ~수십 단위 추가. 무시 가능.
+
+진단 sanity test: `cmux send --surface <ref> "ping"` 한 줄이 즉시 받아지면 통신 정상. hang 발생 시 즉시 메타 메시지 패턴으로 우회 — 60→180 초 timeout 늘리기 재시도 금지.
+
+**참고 errors**: `plugins/cmux/errors/01-cmux-send-multiline-hang.md` — 5.8 KB 위임 메시지 hang 사고, 본 패턴 도출 배경.
 
 #### 위임 sentinel & 폴링 규약
 
