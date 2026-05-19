@@ -1,21 +1,23 @@
 ---
 allowed-tools: Write, Bash
-description: 현재 세션 진행 상황·결정·다음 액션을 체크포인트 마크다운으로 저장. /clear 후 다음 세션에서 이 파일 한 장으로 이어서 작업할 수 있게 함. 트리거 — 체크포인트, 컨텍스트 저장, clear 전 저장, 이어서 작업하게 정리해줘 등.
+description: 현재 세션 진행 상황·결정·다음 액션을 handoff 마크다운으로 저장. /clear 후 다음 세션이 이 파일 한 장으로 이어서 작업할 수 있게 함. 빌트인 /rewind(과거 되감기) 와 별개 — 이건 미래 세션에 바통 넘기기. 트리거 — 핸드오프, 컨텍스트 저장, clear 전 정리, 다음 세션에 넘겨줘 등.
 argument-hint: 인자 없음 (현재 작업 디렉터리 자동 감지)
 ---
 
-# /checkpoint — 세션 상태를 다음 세션으로 넘기는 체크포인트 저장
+# /handoff — 세션 상태를 다음 세션으로 넘기는 바통 저장
 
 긴 세션이 끝나갈 때, **다음 세션의 Claude 가 이 파일 한 장만 읽으면 즉시 같은 지점에서 작업을 이어갈 수 있도록** 현재 컨텍스트를 압축해 저장.
+
+> 빌트인 `/rewind` 와 혼동 금지 — `/rewind` 는 같은 세션 안에서 과거 시점으로 되감는 도구. `/handoff` 는 `/clear` 너머로 미래 세션에 바통을 넘기는 도구. 방향이 정반대.
 
 ## 동작 절차
 
 1. **프로젝트 슬러그 감지** — `basename "$PWD"` (Bash). cwd 의 디렉터리 이름을 slug 로 사용. 비정상이면 `default`.
 2. **timestamp 생성** — `date +%Y-%m-%d-%H%M%S` (Bash)
 3. **저장 경로 구성**:
-   - 아카이브: `~/.claude/checkpoints/<slug>/<timestamp>.md`
-   - 최신: `~/.claude/checkpoints/<slug>/latest.md` (같은 내용 덮어쓰기)
-4. **체크포인트 본문 작성** — 아래 **표준 포맷** 그대로. 누락된 섹션은 "(없음)" 으로 명시 (헤더는 유지). 거짓말·날조 금지 — 모르면 모른다고 적기.
+   - 아카이브: `~/.claude/handoffs/<slug>/<timestamp>.md`
+   - 최신: `~/.claude/handoffs/<slug>/latest.md` (같은 내용 덮어쓰기)
+4. **handoff 본문 작성** — 아래 **표준 포맷** 그대로. 누락된 섹션은 "(없음)" 으로 명시 (헤더는 유지). 거짓말·날조 금지 — 모르면 모른다고 적기.
 5. **두 파일 모두 Write 도구로 저장**
 6. **사용자에게 반환**:
    - 저장된 경로
@@ -24,7 +26,7 @@ argument-hint: 인자 없음 (현재 작업 디렉터리 자동 감지)
 ## 표준 포맷
 
 ```markdown
-# Checkpoint — {{프로젝트 slug}} · {{YYYY-MM-DD HH:MM}}
+# Handoff — {{프로젝트 slug}} · {{YYYY-MM-DD HH:MM}}
 
 > **다음 세션 Claude 에게**: 이 파일을 읽었다면 §6 "다음 액션" 의 1번을 사용자에게 확인받은 뒤 그대로 진행. 사용자에게 "어디까지 했지?" 묻지 말 것 — 답이 §3, §4 에 있음.
 
@@ -81,11 +83,11 @@ argument-hint: 인자 없음 (현재 작업 디렉터리 자동 감지)
 
 ```
 저장됨:
-- ~/.claude/checkpoints/<slug>/<timestamp>.md
-- ~/.claude/checkpoints/<slug>/latest.md (덮어씀)
+- ~/.claude/handoffs/<slug>/<timestamp>.md
+- ~/.claude/handoffs/<slug>/latest.md (덮어씀)
 
 /clear 후 다음 세션 첫 메시지로:
-> 이 체크포인트 읽고 이어서 작업해줘: ~/.claude/checkpoints/<slug>/latest.md
+> 이 handoff 읽고 이어서 작업해줘: ~/.claude/handoffs/<slug>/latest.md
 ```
 
 장황한 설명, 작업 후기 모두 금지. 두 가지(파일 경로 + 다음 프롬프트)만 분명히.
@@ -98,7 +100,8 @@ argument-hint: 인자 없음 (현재 작업 디렉터리 자동 감지)
 - ❌ §9 프롬프트를 두 문장 이상으로 — 한 문장이 원칙
 - ❌ `open` 명령으로 파일 자동 열기 — 출력은 텍스트로만
 - ❌ "혹시 더 추가할 것 있으세요?" 같은 확인 질문 — 저장은 단호하게 끝내기
+- ❌ 빌트인 `/rewind` 와 같은 도구처럼 설명 — 둘은 방향이 반대 (rewind=과거로, handoff=미래로)
 
 ## 토큰 효율
 
-체크포인트는 보통 1.5~3K 토큰. 다음 세션은 이 파일 한 장만 읽으면 되므로 초기 30K+ 컨텍스트 재구성을 ~3K 로 줄임. 압축비 10배 이상이 정상.
+handoff 는 보통 1.5~3K 토큰. 다음 세션은 이 파일 한 장만 읽으면 되므로 초기 30K+ 컨텍스트 재구성을 ~3K 로 줄임. 압축비 10배 이상이 정상.
