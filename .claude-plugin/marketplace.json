@@ -25,6 +25,15 @@
       "category": "development"
     },
     {
+      "name": "dh-handoff",
+      "description": "현재 세션 진행 상황을 handoff 마크다운으로 저장 — /clear 후 다음 세션에 바통 넘기기 (빌트인 /rewind 와 별개: rewind=과거로 되감기, handoff=미래 세션에 전달)",
+      "author": {
+        "name": "KwonDooHyeon"
+      },
+      "source": "./plugins/handoff",
+      "category": "productivity"
+    },
+    {
       "name": "dh-html",
       "description": "직전 AI 답변에서 핵심 정보를 추출해 HTML 카드 대시보드로 렌더링 — /tmp 저장 후 file:// URL 반환",
       "author": {
