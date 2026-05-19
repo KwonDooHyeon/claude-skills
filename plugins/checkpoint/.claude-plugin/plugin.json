@@ -1,0 +1,7 @@
+{
+  "name": "dh-checkpoint",
+  "description": "현재 세션 진행 상황을 체크포인트 마크다운으로 저장 — /clear 후 다음 세션에서 이어서 작업 가능",
+  "author": {
+    "name": "KwonDooHyeon"
+  }
+}
