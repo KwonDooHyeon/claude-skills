@@ -181,6 +181,37 @@ LLM 의 자연스러운 본능: "단순한 grep 한 번이면 답이 나오는�
 
 판단이 흔들릴 때 기준: **"이 작업이 어느 세션의 메모리에 쌓여야 하는가?"**. 답이 root 가 아니면 무조건 위임.
 
+#### 세션 간 병렬 위임 (서로 다른 세션은 동시에)
+
+규칙 14 의 "동시 위임 금지" 는 **같은 sub-session 에 한정**된다. **서로 다른 세션** (예: engine + front + back) 에 독립적인 작업을 줄 때는 **병렬 위임이 기본** — 직렬로 하나씩 기다리지 말 것. 사용자가 멀티 세션을 띄운 이유 중 하나가 동시 진행이다.
+
+발동 조건: 작업들이 **상호 독립** (한 세션 결과가 다른 세션 입력이 아님) 이고 **서로 다른 sub-session** 대상일 때. 의존 관계가 있으면 직렬.
+
+절차:
+1. **slug 를 작업마다 unique 하게** — `engine-refactor-1`, `front-fix-1` 처럼 세션·작업이 구분되게. sentinel/result 파일도 각각 분리 (`/tmp/cmux-done-engine-refactor-1`, `/tmp/cmux-done-front-fix-1`).
+2. **각 세션에 메타 메시지 + 파일 경로 패턴으로 송신** (단일 위임과 동일). 송신 전 각 세션 ctx 게이지 확인 (규칙 13).
+3. **폴링은 모든 sentinel 을 한 루프에서 동시 감시** — 각각 별도 폴링을 직렬로 돌리면 병렬 의미가 없다:
+   ```bash
+   bash -c '
+     deadline=$((SECONDS + 1800))
+     slugs="engine-refactor-1 front-fix-1"
+     until [ -z "$slugs" ]; do
+       [ $SECONDS -ge $deadline ] && { echo "TIMEOUT 남은:$slugs"; exit 124; }
+       rest=""
+       for s in $slugs; do [ -f /tmp/cmux-done-$s ] && echo "DONE $s" || rest="$rest $s"; done
+       slugs="$(echo $rest | xargs)"
+       [ -n "$slugs" ] && sleep 15
+     done
+     echo "ALL DONE"
+   '
+   ```
+4. **결과 수집은 완료된 순서대로** — 각 `/tmp/cmux-result-<slug>.md` 를 읽어 세션별로 정리 후 통합 보고.
+
+주의:
+- **같은 세션엔 여전히 1개씩** (규칙 14 그대로). 병렬은 세션 *간* 에만.
+- **크로스커팅 작업** (2개 이상 세션이 같은 파일/스키마 동시 변경) 은 병렬 금지 — 충돌. 이건 root 직접 처리 또는 직렬.
+- 타임아웃 시 **어느 slug 가 남았는지** 명시해서 보고 (위 패턴이 남은 slug 출력).
+
 #### 위임 메시지 표준 템플릿
 
 매 위임마다 즉흥적으로 메시지를 짜면 sentinel 누락 / AskUserQuestion 인터럽트 / quoting 실패 같은 사고가 반복된다. 다음 템플릿의 빈칸을 채워 사용:
@@ -422,7 +453,7 @@ YYYY-MM-DD, 어느 단계에서
     - 규칙 10(에러 문서 남기기)과 한 쌍으로 작동한다: **쓰기(10) ↔ 읽기(11)**.
 12. **위임 sentinel + 폴링 timeout 필수** — 모든 위임은 unique sentinel + timeout 보호. **파일 기반 sentinel (`/tmp/cmux-done-<slug>`) 이 기본 권장**, 화면 기반 (`<<<DONE:<slug>>>>`) 은 fallback. 화면 기반 사용 시 baseline count 캡처 + scrollback 포함 grep 필수 — 즉흥적인 sentinel ("DONE", "끝남", "OK") 금지. 자세한 규약은 "위임 sentinel & 폴링 규약" 섹션 참조.
 13. **Sub-session 컨텍스트 게이지 확인** — 위임 전 `cmux read-screen` 으로 sub-session 의 ctx 게이지 (`ctx: NN%`) 를 확인한다. 80% 초과 시 사용자에게 경고 ("front 세션 컨텍스트 80% 초과, /clear 또는 작업 분할 권장"). limit 근처에서 큰 위임은 작업 중 truncation 위험.
-14. **동시 위임 금지** — 같은 sub-session 에 한 번에 하나의 작업만. 이전 위임의 sentinel 이 잡힐 때까지 다음 위임 메시지를 보내지 않는다. 동시 송신 시 메시지가 섞여서 들어가거나 첫 작업의 인터랙티브 입력으로 두 번째 메시지가 흡수되는 사고 발생. 긴급히 인터럽트가 필요하면 `cmux send-key ctrl+c` 로 명시적 취소 후 재위임.
+14. **동시 위임 금지 (같은 세션 한정)** — 같은 sub-session 에 한 번에 하나의 작업만. 이전 위임의 sentinel 이 잡힐 때까지 다음 위임 메시지를 보내지 않는다. 동시 송신 시 메시지가 섞여서 들어가거나 첫 작업의 인터랙티브 입력으로 두 번째 메시지가 흡수되는 사고 발생. 긴급히 인터럽트가 필요하면 `cmux send-key ctrl+c` 로 명시적 취소 후 재위임. **단 서로 다른 세션엔 병렬 위임이 기본** — "세션 간 병렬 위임" 섹션 참조.
 15. **Claude Code TUI 의 자동완성 ghost text 를 실제 입력으로 오인 금지** — `cmux read-screen` 으로 sub-session 의 프롬프트 영역에 텍스트가 보여도 그게 **자동완성 ghost text** (이전 명령 history 미리보기) 일 수 있다. 실제 입력 buffer 는 비어 있는 상태. 구분 방법:
     - **`-- INSERT --` 표시가 있으면 실제 입력**. 없거나 다른 상태 표시면 ghost text 가능성 큼.
     - ghost text 의 텍스트는 보통 dim(흐릿) 표시지만 `cmux read-screen` 은 색상 정보를 포기하므로 화면 텍스트만으로는 구분 어려움.
