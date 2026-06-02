@@ -202,3 +202,4 @@ cmux browser --surface <ref> eval "js코드"               # JS 실행
 15. **TUI 자동완성 ghost text 오인 금지** — `-- INSERT --` 표시 + `cmux send-key backspace` 로 판정. 상세 → `references/rules.md`.
 16. **긴 메시지 `cmux send` paste expansion / timeout 처리** — timeout 직후 `read-screen` 으로 실제 입력 상태 우선 확인. 상세 → `references/rules.md`.
 17. **ctx 40% 자동 handoff 라이프사이클** ⚠️ — *매 turn 시작 시* 측정 + 2 turn 연속 40% 초과 시 트리거. Sub: 반자동 (사용자 OK 후 자동 handoff → /clear → 재개). Root self: 부드러운 한 줄 알림 (사용자가 /clear 직접 입력). **매 turn 시작 시 `references/ctx-handoff-lifecycle.md` Read 후 측정**.
+18. **사용자 의견 필요 시 AskUserQuestion tool 강제 사용** ⚠️ — 보고 중 *결정/선택지/옵션 비교* 가 필요하면 자연어 표 ("A/B/C 중 어떻게 가시겠어요?") 대신 **반드시 AskUserQuestion tool 호출**. 사용자 doobie3141@gmail.com 명시 요청 (2026-06-02). 자연어 옵션 나열은 사용자 응답 부담 ↑ + 의도 모호. AskUserQuestion 이 선택 UI 제공해 빠른 결정. **자세한 발동 조건 / 예외 / 형식은 `references/rules.md` 의 룰 18 절 필수 Read**.
