@@ -1,25 +1,35 @@
 # cmux ctx 40% 자동 handoff 라이프사이클 (필수 Read 자료)
 
-> **언제 이 파일을 Read 하나**: 메인 `cmux-workspace` 가 *룰 17 (매 turn 시작 ctx 측정)* 을 안내한 모든 경우. 매 turn 시작 시 측정 절차 + 임계값 도달 시 처리는 본 파일이 기준. 안 읽고 즉흥 처리 시 false-positive / 사고 시점 손실 가능.
+> **언제 이 파일을 Read 하나**: 컨텍스트에 `⚠️ [cmux 룰 17] ... handoff 검토 권장` 경고가 나타난 경우. **측정은 더 이상 에이전트가 직접 하지 않는다** — `hooks/measure-ctx.sh`(UserPromptSubmit 훅)가 자동 수행한다. 본 파일은 *경고를 받았을 때의 대응 절차* 기준. 안 읽고 즉흥 처리 시 false-positive / 사고 시점 손실 가능.
 
 ---
 
-## 룰 17 전체 — 매 turn 시작 ctx 측정 + 40% 자동 handoff
+## 룰 17 전체 — 훅 자동 측정 + 경고 수신 시 40% 자동 handoff 대응
 
 사용자 요청 (사용자 doobie3141@gmail.com / 2026-06-02 결정). 룰 13 의 위임-직전 80% 경고와 별개의 *상시 모니터링 layer*.
 
-### 트리거 조건
+**역할 분담** (2026-06-08 제어 역전):
+- **측정/기록/판정 = 훅** (`hooks/measure-ctx.sh`, UserPromptSubmit). 매 prompt 마다 harness 가 강제 실행 → 에이전트 누락 불가.
+- **대응 = 에이전트** (본 파일). 훅이 stdout 으로 주입한 경고를 보고 handoff 절차 수행.
 
-- **체크 시점**: 매 turn 시작 시 (사용자 prompt 수신 직후, 다른 도구 호출 이전).
-- **임계값**: 40% 초과 (`>=40`).
-- **False-positive 차단**: 같은 세션에서 *2 turn 연속* 40% 초과 시에만 발동. TUI redraw fluctuation / 짧은 spike 차단.
-- **Cooldown**: 한 세션에 대해 자동 handoff trigger 후 1시간 (또는 새 /clear 가 실제 발생할 때까지) 중복 발동 금지.
+### 측정은 훅이 한다 (에이전트 직접 측정 금지)
 
-### 측정 절차
+`measure-ctx.sh` 가 매 prompt 마다 자동으로:
 
-1. `cmux tree --all` 로 워크스페이스 내 모든 terminal surface 식별 (자기 자신 제외 — 단 root self 항목은 별도 처리).
-2. 각 surface 에 `cmux read-screen --surface <ref> --lines 50` → `grep -oE 'ctx[: ]*[0-9]+%' | head -1 | grep -oE '[0-9]+'` 로 ctx 값 추출. 미감지면 *조용히 skip* (false alarm 차단).
-3. 추출된 값을 `/tmp/cmux-ctx-history-<surface_ref>.log` 에 한 줄씩 append (`<unix_timestamp> <ctx_pct>`). 직전 turn 값과 비교해서 *2 turn 연속 40% 초과* 판정.
+1. `cmux tree --all` 로 모든 terminal surface 식별.
+2. 각 surface 의 `cmux read-screen` 에서 `ctx[: ]*[0-9]+%` 추출 (미감지 = 조용히 skip).
+3. `/tmp/cmux-ctx-history-<surface_ref>.log` 에 `<unix_timestamp> <ctx_pct>` append + trim.
+4. *직전 2개 측정 모두 ≥40% + 1h 쿨다운* 경과 시 stdout 으로 경고 주입:
+   `⚠️ [cmux 룰 17] surface:N ctx N% (2연속 40%↑) — handoff 검토 권장`
+
+→ **에이전트는 위 측정을 다시 수행하지 않는다.** 컨텍스트에 위 경고가 보이면 곧장 아래 *대응 절차*로 진행. 경고가 없으면 룰 17 관련 행동 불필요.
+
+### 트리거 조건 (훅이 판정, 참고용)
+
+- **체크 시점**: 매 prompt (UserPromptSubmit 훅 = harness 강제 실행).
+- **임계값**: 40% 이상 (`>=40`).
+- **False-positive 차단**: 같은 세션에서 *직전 2개 측정 연속* 40%↑ 시에만 발동. TUI redraw fluctuation / 짧은 spike 차단. ctx 미감지 surface 는 skip.
+- **Cooldown**: 한 세션에 대해 경고 발동 후 1시간 (`/tmp/cmux-ctx-cooldown-<safe>` mtime 기준) 중복 발동 금지.
 
 ### Sub-session 분기 (반자동)
 
@@ -51,6 +61,8 @@ Root 는 self-`/clear` 불가능. 트리거 시:
 
 ### 본 룰의 한계
 
-- ctx 게이지 화면 파싱 fragile — TUI layout 변경 시 정규식 깨질 수 있음. 미감지 = 안전한 skip.
-- Root self-측정은 본 turn 의 응답이 누적되기 *전* 시점이라 정확도 보장 어려움. 부드러운 알림 수준 유지.
-- `/tmp/cmux-ctx-history-*` 로그는 디스크 누적 — 주기적 정리 필요 (별도 cron / 또는 매 알림 시 1주 이상 된 로그 자동 삭제).
+- **훅은 세션 START 에 로드** — 플러그인(마켓플레이스/캐시)을 고쳐도 *현재 실행 중인 세션엔 미적용*. 적용은 다음 새 세션부터. 룰 변경은 한 박자 늦게 반영됨을 전제.
+- ctx 게이지 화면 파싱 fragile — TUI layout 변경 시 정규식 깨질 수 있음. 미감지 = 안전한 skip (훅이 처리).
+- Root self 도 훅이 측정하지만, 본 turn 의 응답이 누적되기 *전* 시점이라 정확도 보장 어려움. 부드러운 알림 수준 유지.
+- `/tmp/cmux-ctx-history-*` 로그는 훅이 마지막 ~50줄로 trim 하므로 무한 누적은 아님. `/tmp/cmux-ctx-cooldown-*` 파일은 1h 쿨다운 마커.
+- 측정 자체 디버깅이 필요하면 훅을 직접 실행: `CMUX_CTX_THRESHOLD=4 ${CLAUDE_PLUGIN_ROOT}/hooks/measure-ctx.sh` (env 로 임계값/쿨다운 오버라이드 가능).

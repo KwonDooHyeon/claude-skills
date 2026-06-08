@@ -1,6 +1,6 @@
 # cmux 중요 규칙 17개 — 상세 (필수 Read 자료)
 
-> **언제 이 파일을 Read 하나**: 메인 `cmux-workspace` 의 "중요 규칙" 섹션은 *한 줄 summary* 만 — 상세 절차/예외/근거가 필요한 모든 경우 본 파일을 Read. 특히 룰 12 (sentinel), 룰 13 (위임-직전 80% 경고), 룰 17 (매 turn 40% 측정) 은 *작업 직전* 반드시 Read.
+> **언제 이 파일을 Read 하나**: 메인 `cmux-workspace` 의 "중요 규칙" 섹션은 *한 줄 summary* 만 — 상세 절차/예외/근거가 필요한 모든 경우 본 파일을 Read. 특히 룰 12 (sentinel), 룰 13 (위임-직전 80% 경고), 룰 17 (ctx 40% handoff — 측정은 훅 자동, 경고 수신 시 대응) 은 *작업 직전* 반드시 Read.
 
 ---
 
@@ -76,7 +76,7 @@ surface에 프롬프트나 선택지가 보이면 "사용자 입력을 기다리
 
 위임 전 `cmux read-screen` 으로 sub-session 의 ctx 게이지 (`ctx: NN%`) 를 확인한다. 80% 초과 시 사용자에게 경고 ("front 세션 컨텍스트 80% 초과, /clear 또는 작업 분할 권장"). limit 근처에서 큰 위임은 작업 중 truncation 위험.
 
-룰 17 (매 turn 시작 40% 측정) 과는 *별개의 layer* — 룰 13 은 *위임-직전 위험 경고*, 룰 17 은 *상시 모니터링*.
+룰 17 (ctx 40% handoff — 측정은 훅 자동) 과는 *별개의 layer* — 룰 13 은 *위임-직전 위험 경고*(에이전트가 직접 read-screen), 룰 17 은 *훅 기반 상시 모니터링*.
 
 ## 14. 동시 위임 금지 (같은 세션 한정)
 
@@ -104,15 +104,16 @@ surface에 프롬프트나 선택지가 보이면 "사용자 입력을 기다리
 3. 입력이 정말 안 들어갔으면 메시지를 1KB 이내로 줄여서 재시도 (자세한 컨텍스트는 위키 경로 참조로 대체).
 4. timeout 만 보고 곧장 같은 메시지를 재전송하면 두 번 입력되어 sub-session 이 혼란 — 반드시 read-screen 으로 1차 시도 결과 확인 후 재시도 여부 결정.
 
-## 17. ctx 40% 자동 handoff 라이프사이클 ⚠️ 매 turn 시작 시 references/ctx-handoff-lifecycle.md 필수 Read
+## 17. ctx 40% 자동 handoff 라이프사이클 ⚠️ 측정은 훅 자동 — 경고 수신 시 references/ctx-handoff-lifecycle.md 필수 Read
 
-매 turn 시작 시 측정 + 반자동 처리. 사용자 요청 (사용자 doobie3141@gmail.com / 2026-06-02 결정). 룰 13 의 위임-직전 80% 경고와 별개의 *상시 모니터링 layer*.
+**측정은 `hooks/measure-ctx.sh`(UserPromptSubmit 훅)가 매 prompt 자동 수행** (2026-06-08 제어 역전 — 에이전트 self-policing 누락 방지). 에이전트는 *직접 측정하지 않는다*. 사용자 요청 (사용자 doobie3141@gmail.com / 2026-06-02 결정). 룰 13 의 위임-직전 80% 경고와 별개의 *상시 모니터링 layer*.
 
-**측정 절차 / Sub-session 분기 / Root 자신 분기 / 한계** 모두 `references/ctx-handoff-lifecycle.md` 에 정리. **매 turn 시작 시 본 reference 를 Read 한 후** 측정 진행. 안 읽고 즉흥 측정 시 false-positive / 무한 알림 사고 가능.
+훅이 2연속 40%↑ 감지 시 컨텍스트에 `⚠️ [cmux 룰 17] surface:N ctx N% (2연속 40%↑) — handoff 검토 권장` 를 주입. **이 경고가 보일 때만** `references/ctx-handoff-lifecycle.md` 를 Read 하고 대응 절차(Sub-session 분기 / Root 자신 분기) 수행. 경고 없으면 룰 17 관련 행동 불필요.
 
 ### 한 줄 summary
 
-- 트리거: 매 turn 시작 시 + 2 turn 연속 40% 초과
+- 측정: 훅 자동 (에이전트 직접 측정 금지) / 트리거: 직전 2개 측정 연속 40%↑
+- 대응: 컨텍스트에 `⚠️ [cmux 룰 17]` 경고 보이면 lifecycle Read 후 처리
 - Sub-session: 사용자 OK → 자동 handoff → /clear → 재개 prompt (반자동)
 - Root self: 부드러운 한 줄 알림 (사용자가 /clear 직접 입력)
 - Cooldown: 1시간 / 세션 독립 / 미감지 시 안전 skip
