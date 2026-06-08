@@ -1,5 +1,5 @@
 {
-  "description": "Claude Code 작업 완료 시 cmux notify로 알림 전송",
+  "description": "cmux 연동 훅 — 작업 완료 알림(Stop) + 룰 17 ctx 측정/handoff 경고(UserPromptSubmit)",
   "hooks": {
     "Stop": [
       {
@@ -8,6 +8,17 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/notify-on-stop.sh",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/measure-ctx.sh",
+            "timeout": 10
           }
         ]
       }
