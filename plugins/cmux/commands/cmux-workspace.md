@@ -48,17 +48,13 @@ cmux new-surface --pane <ref> --workspace <ref>  # 새 surface(탭) 생성
 cmux rename-tab --surface <ref> "이름"       # 탭 이름 변경
 cmux close-surface --surface <ref>           # surface 닫기
 
-# 브라우저 자동화
-cmux new-window                              # 새 창 생성
-cmux close-window --window <ref>             # 창 닫기
-cmux browser open <url>                      # 브라우저 열기
-cmux browser --surface <ref> wait --load-state complete  # 로딩 대기
-cmux browser --surface <ref> snapshot --compact          # DOM 스냅샷
-cmux browser --surface <ref> screenshot --out /tmp/ss.png # 스크린샷
-cmux browser --surface <ref> get text "selector"         # 텍스트 추출
-cmux browser --surface <ref> click "selector"            # 클릭
-cmux browser --surface <ref> type "selector" "text"      # 입력
-cmux browser --surface <ref> eval "js코드"               # JS 실행
+# 브라우저 자동화 (agent-browser — 외부 헤드리스 데몬)
+agent-browser open <url>          # 1. 페이지 열기 (--headed 로 창 표시)
+agent-browser snapshot -i         # 2. 상호작용 요소 + @eN ref 확인
+agent-browser click @e3           # 3. ref로 조작 (페이지 바뀌면 재-snapshot)
+agent-browser screenshot /tmp/ss.png   # 보고용 스크린샷
+agent-browser close               # 작업 끝나면 데몬 정리
+# 전체 레퍼런스(find/wait/auth/network/tab/session): agent-browser skills get core --full
 ```
 
 ---
@@ -103,17 +99,18 @@ cmux browser --surface <ref> eval "js코드"               # JS 실행
 2. `cmux read-screen --surface <ref>` 실행 (필요 시 `--scrollback --lines 200`)
 3. 화면 내용을 AI가 분석하여 요약
 
-### "browse <url>" — 브라우저에서 URL 열기
+### "browse <url>" — URL 열어 확인
 
-**반드시 새 창(window)에서 열기.** 현재 워크스페이스에 열면 작업 공간이 방해됨.
+외부 **agent-browser**(헤드리스)로 연다. cmux 워크스페이스를 건드리지 않으므로 창 관리 불필요.
+명령을 실행하기 전 처음 1회 `agent-browser skills get core --full` 로 최신 사용법 확인 권장.
 
-1. `cmux new-window` 로 새 창 생성 (window ref 기록, 예: OK <window-uuid>)
-2. 새 창에서 `cmux browser open <url> --window <window-uuid>` 실행 — **반드시 --window 지정!** 생략하면 기존 pane에서 reuse됨
-3. `cmux browser <surface> wait --load-state complete` 로 로딩 대기
-4. `cmux browser <surface> snapshot --compact` 로 내용 읽기
-5. 필요 시 스크린샷: `cmux browser <surface> screenshot --out /tmp/<name>.png`
-6. 읽기 완료 후 AskUserQuestion으로 "브라우저 창을 닫을까요?" 확인
-7. 닫겠다고 하면 `cmux close-window --window <ref>` 정리
+1. `agent-browser open <url>` — 사용자가 "창 띄워"/"보면서 할래" 라고 하면 `--headed` 추가
+2. `agent-browser snapshot -i` 로 내용(상호작용 요소 + @eN ref) 읽기
+3. 필요 시 `agent-browser screenshot /tmp/<name>.png` 로 사용자에게 보고
+4. 추가 조작이 필요하면 ref로 (`agent-browser click @e3` → 페이지 바뀌면 재-snapshot)
+5. 읽기/조작 완료 후 `agent-browser close` 로 데몬·Chrome 정리
+
+> 헤드리스라 닫을 "창"이 없으므로 예전의 "창을 닫을까요?" 확인 단계는 없음 — `close` 는 백그라운드 데몬 정리용.
 
 ### 서버 실행 — 사용자가 "서버 띄워줘", "백엔드 실행", "프론트 실행" 등을 요청할 때
 
@@ -190,7 +187,7 @@ cmux browser --surface <ref> eval "js코드"               # JS 실행
 3. **전송 전 확인** — `send` 모드는 반드시 사용자 확인 후 전송.
 4. **에러 감지** — 화면의 에러/traceback/실패 메시지는 강조 알림.
 5. **Claude 세션 감지** — Claude Code 관련 내용 보이면 진행 작업/진행률 분석.
-6. **브라우저는 새 창** — `cmux new-window` 로 별도 창. 현재 작업 공간 보호.
+6. **브라우저는 agent-browser (외부 헤드리스)** — cmux 워크스페이스 안 건드림. 기본 헤드리스, 관전 시 `--headed`, 작업 후 `agent-browser close`.
 7. **입력 대기 감지** — 프롬프트/선택지 보이면 "사용자 입력 대기" 알림.
 8. **서버 surface 중복 방지** — 같은 이름 surface 있으면 재사용.
 9. **서버 실행 명령 불확실 시 물어보기** — 자의 판단 금지.

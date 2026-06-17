@@ -34,9 +34,11 @@ surface ref보다 이름으로 찾기. 부분 일치 허용.
 
 Claude Code 관련 내용이 보이면 진행 중인 작업과 진행률 분석.
 
-## 6. 브라우저는 새 창
+## 6. 브라우저는 agent-browser (외부 헤드리스)
 
-`cmux new-window`로 별도 창에서 열기. 현재 작업 공간 보호.
+cmux 워크스페이스를 건드리지 않는 외부 데몬. 창 관리 불필요.
+기본 헤드리스 — 사용자가 관전을 원하면 `--headed`. 작업 후 `agent-browser close` 로 데몬 정리.
+전체 사용법은 `agent-browser skills get core --full`.
 
 ## 7. 입력 대기 감지
 
